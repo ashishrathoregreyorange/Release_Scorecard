@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .card {
+    @apply rounded-2xl bg-white border border-slate-200 shadow-sm p-4;
+  }
+  .pill {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+  .pill-go { @apply pill bg-green-100 text-green-800; }
+  .pill-conditional { @apply pill bg-amber-100 text-amber-800; }
+  .pill-nogo { @apply pill bg-red-100 text-red-800; }
+  .pill-neutral { @apply pill bg-slate-100 text-slate-700; }
+}
+
+/* Print view — strips nav and interactivity. */
+body.print-mode nav,
+body.print-mode .no-print {
+  display: none !important;
+}
+body.print-mode {
+  background: white !important;
+}
+body.print-mode .card {
+  box-shadow: none !important;
+  border-color: #cbd5e1 !important;
+}

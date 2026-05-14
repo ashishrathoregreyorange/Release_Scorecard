@@ -1,0 +1,22 @@
+services:
+  app:
+    build: .
+    image: release-dashboard:latest
+    ports:
+      - "3000:3000"
+    env_file: .env
+    volumes:
+      # Mount the host CSV folder so `docker compose run app npm run ingest`
+      # picks up files placed by humans.
+      - ./data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Optional cache. The current v1 uses an in-memory map so this is unused,
+  # but the service is wired in so future swaps don't need compose changes.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"

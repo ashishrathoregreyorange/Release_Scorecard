@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Node / frontend
+node_modules/
+dist/
+
+# Env / secrets
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / temp
+*.log
+*.tmp
+
+# Generated PDFs (the dashboard creates these on demand)
+*.pdf
+
+# Local data store (rebuilt by `npm run ingest`)
+release-dashboard/data/store.json

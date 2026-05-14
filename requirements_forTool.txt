@@ -1,0 +1,144 @@
+mkdir release-dashboard && cd release-dashboard
+npm init -y
+npm install express react react-dom vite @vitejs/plugin-react
+npm install recharts tailwindcss papaparse axios dotenv
+Create the folder structure:
+release-dashboard/
+├── server/
+│   ├── index.js          # Express API server
+│   ├── jira.js           # JIRA data fetcher
+│   ├── scorecard.js      # Score calculation logic
+│   └── csvParser.js      # CSV ingestion
+├── src/
+│   ├── App.jsx
+│   ├── components/
+│   │   ├── ScoreRing.jsx
+│   │   ├── MetricsGrid.jsx
+│   │   ├── IssueCard.jsx     # RCA + CAPA per issue
+│   │   ├── TeamLearnings.jsx
+│   │   └── ProjectTabs.jsx
+│   └── data/
+│       └── mockData.js   # Seed data for local dev
+├── scripts/
+│   └── ingestCSV.js      # One-shot CSV → DB loader
+└── .env
+
+Phase 2 — Backend data pipeline
+Tell Claude Code to build the data layer in this order:
+Step 1 — CSV ingestion script
+Prompt Claude Code:
+"Write a Node.js script in scripts/ingestCSV.js that:
+- Reads all CSV files from a /data folder
+- Parses them with papaparse
+- Maps each row to a release record with fields:
+  projectName, releaseVersion, testPassRate, automationCoverage,
+  criticalBugsOpen, totalBugs, escapedDefects, mttr,
+  issues[] (each with id, title, severity, rca, capa, owner, dueDate, team)
+  teamLearnings[] (team, learning, owner, dueDate)
+- Saves the parsed data to a local SQLite DB (or JSON store for v1)"
+Step 2 — Score calculation engine
+Prompt Claude Code:
+"Write scorecard.js that takes a release record and returns a
+score 0–100 based on weighted inputs:
+  testPassRate        → 25%
+  automationCoverage  → 20%
+  criticalBugsOpen    → 20% (inverted — 0 bugs = full score)
+  escapedDefects      → 20% (inverted)
+  slaAdherence        → 15%
+Return score, breakdown object, and a go/nogo/conditional recommendation."
+Step 3 — Express API
+Prompt Claude Code:
+"Write server/index.js with these routes:
+  GET /api/projects          → list all projects + latest release score
+  GET /api/projects/:id      → full scorecard for one project
+  GET /api/projects/:id/history → score trend across releases
+  POST /api/projects/:id/capa → submit/update a CAPA entry
+  GET /api/export/:id/pdf    → trigger PDF export of scorecard"
+
+Phase 3 — Frontend dashboard
+Step 4 — Project tabs + routing
+Prompt Claude Code:
+"Build App.jsx with:
+- A top nav showing org name, publish date, release manager
+- Project tab switcher — one tab per project pulled from GET /api/projects
+- Each tab loads its own full scorecard view
+- Use React Router for deep-linkable project URLs: /projects/:id"
+Step 5 — Scorecard components
+Prompt Claude Code:
+"Build these React components using Tailwind:
+
+ScoreRing.jsx        — SVG ring showing 0–100 score with go/nogo color
+MetricsGrid.jsx      — 6-metric card grid (pass rate, coverage, bugs, MTTD etc.)
+ScoreBreakdown.jsx   — horizontal bar chart per scoring dimension using recharts
+IssueCard.jsx        — bordered card with severity color, RCA box, CAPA box,
+                       owner avatars, due date badge
+TeamLearnings.jsx    — 4-column grid (Engg, QA, Product, Solutions),
+                       each with bullet learnings + owner + due date
+ProjectHeader.jsx    — release name, version, date, manager, go/nogo pill"
+Step 6 — PDF export
+Prompt Claude Code:
+"Add a server route GET /api/export/:id/pdf that:
+- Uses puppeteer to headlessly render /projects/:id?print=true
+- Returns a downloadable PDF
+- The print view hides nav, tabs, and interactive elements
+- Adds a header with logo, project name, release version, date"
+
+Phase 4 — JIRA integration
+Step 7 — Live bug sync
+Prompt Claude Code:
+"Write server/jira.js that:
+- Authenticates with JIRA using API token from .env
+- Fetches all bugs for a given project key and fix version:
+    open criticals, total filed, resolved count, severity breakdown
+- Maps JIRA issue fields to the release record schema
+- Is called on a 5-minute polling interval and on-demand via
+  POST /api/projects/:id/sync
+- Caches results in Redis (or in-memory Map for v1) with 5min TTL"
+.env file to configure:
+JIRA_BASE_URL=https://yourorg.atlassian.net
+JIRA_EMAIL=your@email.com
+JIRA_API_TOKEN=xxxx
+JIRA_PROJECT_KEYS=DHL,WMS,RBC
+DASHBOARD_PORT=3000
+
+Phase 5 — Launch
+Step 8 — Wire it all together
+Prompt Claude Code:
+"Add a package.json scripts section:
+  dev     → concurrently runs vite (frontend) + node server/index.js
+  ingest  → node scripts/ingestCSV.js --dir ./data
+  build   → vite build
+  start   → node server/index.js serving the built frontend as static files
+
+Also add a README with:
+  1. How to add a new project (drop CSV in /data, run npm run ingest)
+  2. How to configure JIRA keys
+  3. How to publish the dashboard (Docker or PM2 instructions)"
+Step 9 — Dockerize for publishing
+Prompt Claude Code:
+"Write a Dockerfile that:
+- Uses node:20-alpine
+- Runs npm run build then starts the Express server
+- Exposes port 3000
+Also write docker-compose.yml with the app service and
+an optional Redis service for caching"
+Launch command once Docker is set up:
+bashdocker compose up -d
+# Dashboard live at http://localhost:3000
+
+Sequence summary
+CSV files / JIRA API
+       ↓
+  ingestCSV.js  →  SQLite / JSON store
+       ↓
+  scorecard.js  →  score + go/nogo
+       ↓
+  Express API   →  /api/projects/*
+       ↓
+  React frontend →  tabs, metrics, RCA/CAPA, learnings
+       ↓
+  PDF export    →  puppeteer headless render
+       ↓
+  Docker        →  published dashboard URL
+
+The critical prompt to give Claude Code first is Step 1 (CSV ingestion) — everything else depends on the data shape being locked. Once the schema is confirmed from your actual CSV files (dhl_figgs_scorecard.csv, release_scorecard.csv), Steps 2 through 9 can move in parallel across two people. Want me to generate the actual starter code for any specific step?
