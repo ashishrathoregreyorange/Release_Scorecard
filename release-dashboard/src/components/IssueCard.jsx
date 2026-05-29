@@ -5,17 +5,42 @@ const SEVERITY_COLOR = {
   low: "border-slate-300 bg-slate-50",
 };
 
-export default function IssueCard({ issue }) {
+export default function IssueCard({ issue, jiraBaseUrl }) {
   const tone = SEVERITY_COLOR[issue.severity] || SEVERITY_COLOR.medium;
+  // Prefer a URL the server already built; otherwise build one from the
+  // base URL the SPA fetched from /api/config (covers .env changes without
+  // re-ingest). Fall back to plain text if neither is available.
+  const jiraId = issue.jiraId || null;
+  const jiraUrl =
+    issue.jiraUrl ||
+    (jiraId && jiraBaseUrl ? `${jiraBaseUrl}/browse/${jiraId}` : null);
+
   return (
     <div className={`rounded-2xl border-l-4 ${tone} p-4`}>
       <div className="flex items-start justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <div className="text-xs uppercase tracking-wide text-slate-500">
             {issue.stage || issue.team || "Issue"} · {issue.severity}
           </div>
           <h4 className="mt-0.5 font-semibold text-slate-900">{issue.title}</h4>
-          {issue.url && (
+          {jiraId && (
+            jiraUrl ? (
+              <a
+                href={jiraUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-md text-xs font-mono bg-sky-100 text-sky-800 hover:bg-sky-200"
+                title={`Open ${jiraId} in JIRA`}
+              >
+                {jiraId} ↗
+              </a>
+            ) : (
+              <span className="inline-block mt-1 px-2 py-0.5 rounded-md text-xs font-mono bg-slate-100 text-slate-700">
+                {jiraId}
+              </span>
+            )
+          )}
+          {!jiraId && issue.url && (
             <a
               href={issue.url}
               target="_blank"

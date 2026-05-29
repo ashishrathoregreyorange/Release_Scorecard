@@ -7,6 +7,26 @@ export async function fetchProjects() {
   return data;
 }
 
+export async function fetchAllReleases() {
+  const { data } = await api.get("/releases");
+  return data;
+}
+
+export async function fetchConfig() {
+  const { data } = await api.get("/config");
+  return data;
+}
+
+export async function uploadCsv(filename, content) {
+  const { data } = await api.post("/upload", { filename, content });
+  return data;
+}
+
+export async function createRelease(payload) {
+  const { data } = await api.post("/releases", payload);
+  return data;
+}
+
 export async function fetchProject(id) {
   const { data } = await api.get(`/projects/${id}`);
   return data;

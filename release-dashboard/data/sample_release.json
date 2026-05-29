@@ -1,0 +1,73 @@
+{
+  "project": "Sample Project",
+  "customer": "Acme Corp",
+  "version": "v1.0.0",
+  "owner": "Ashish R",
+  "releaseDate": "2026-05-29",
+
+  "metrics": {
+    "testPassRate": 92,
+    "automationCoverage": 75,
+    "mttrHours": 18
+  },
+
+  "bugs": {
+    "sqa": 12,
+    "sit": 5,
+    "production": 2,
+    "criticalOpen": 1
+  },
+
+  "jiraIds": ["GM-1001", "GM-1002", "GM-1003"],
+
+  "issues": [
+    {
+      "jiraId": "GM-1001",
+      "title": "Tote routing error under load",
+      "severity": "critical",
+      "rca": "Race condition in cache invalidation",
+      "capa": "Add cache version stamps + invalidate hook",
+      "owner": "Engg Lead",
+      "dueDate": "2026-06-05"
+    },
+    {
+      "jiraId": "GM-1002",
+      "title": "UAT data drift caused false positives",
+      "severity": "high",
+      "rca": "Stale test fixtures",
+      "capa": "Schedule weekly UAT refresh from prod snapshot",
+      "owner": "QA Lead",
+      "dueDate": "2026-06-10"
+    },
+    {
+      "jiraId": "GM-1003",
+      "title": "SIT pipeline flakiness",
+      "severity": "medium",
+      "rca": "Shared SIT env contention",
+      "capa": "Containerise SIT per PR",
+      "owner": "DevOps Lead",
+      "dueDate": "2026-06-15"
+    }
+  ],
+
+  "learnings": [
+    {
+      "team": "Engineering",
+      "note": "Add config-diff gate to CI",
+      "owner": "Engg Lead",
+      "dueDate": "2026-06-12"
+    },
+    {
+      "team": "QA",
+      "note": "Expand regression for new flows",
+      "owner": "QA Lead",
+      "dueDate": "2026-06-18"
+    },
+    {
+      "team": "Solutions",
+      "note": "Customer training on new workflow",
+      "owner": "Solutions Eng",
+      "dueDate": "2026-06-25"
+    }
+  ]
+}

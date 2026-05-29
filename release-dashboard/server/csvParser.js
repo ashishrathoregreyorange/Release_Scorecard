@@ -43,12 +43,17 @@ export function rowToRelease(row, index = 0) {
   const releaseVersion =
     pick(row, "Released Build Version", "Release Version") || `Release ${index + 1}`;
 
-  // ---------- Stage bug totals (DHL schema) ----------
+  // ---------- Stage bug totals (DHL schema + simple schema) ----------
+  // Accept both "SQA Bugs Total" (rich DHL CSV) and "SQA Bugs" (simple CSV),
+  // and fall back to summing the Product/Module/SA-SI breakdown.
   const sqaTotal =
     num(row["SQA Bugs Total"]) ??
+    num(row["SQA Bugs"]) ??
     sum(num(row["SQA Bugs - Product"]), num(row["SQA Bugs - Module"]), num(row["SQA Bugs - SA/SI"]));
   const sitTotal =
     num(row["SIT/UAT/HAT Bugs Total"]) ??
+    num(row["SIT Bugs"]) ??
+    num(row["SIT/UAT/HAT Bugs"]) ??
     sum(
       num(row["SIT/UAT/HAT Bugs - Product"]),
       num(row["SIT/UAT/HAT Bugs - Module"]),
@@ -56,57 +61,86 @@ export function rowToRelease(row, index = 0) {
     );
   const prodTotal =
     num(row["Production Bugs Total"]) ??
+    num(row["Production Bugs"]) ??
     sum(
       num(row["Production Bugs - Product"]),
       num(row["Production Bugs - Module"]),
       num(row["Production Bugs - SA/SI"]),
     );
 
-  // Generic scorecard fallback fields.
+  // Generic scorecard fallback fields. "Critical Bugs Open" is the simple
+  // schema's name for the same thing.
   const internalBugs = num(row["Bugs Found (Internal QA)"]);
   const customerBugs = num(row["Bugs Raised by Customer"]);
-  const criticalCustBugs = num(row["Critical Bugs by Customer"]);
+  const criticalCustBugs =
+    num(row["Critical Bugs Open"]) ?? num(row["Critical Bugs by Customer"]);
   const customerPending = num(row["Customer Bugs Pending"]);
 
-  // Test/coverage rollups.
+  // Test/coverage rollups. Simple schema: a single "Test Pass Rate %" cell
+  // (0–100). Rich schema: counts of passed/executed test cases.
   const tcExecuted = num(row["Test Cases Executed"]);
   const tcPassed = num(row["Test Cases Passed"]);
   const tcFailed = num(row["Test Cases Failed"]);
   const testPassRate =
-    tcExecuted && tcPassed != null
+    num(row["Test Pass Rate %"]) ??
+    num(row["Test Pass Rate"]) ??
+    (tcExecuted && tcPassed != null
       ? Math.round((tcPassed / tcExecuted) * 1000) / 10
-      : null;
+      : null);
 
   const automationCoverage =
     pct(row["Automation Coverage %"]) ?? pct(row["Automation Coverage"]);
 
-  // Compose an "issues" list from CAPA-bearing rows. Each CAPA learning gets a
-  // synthetic issue card so the UI has something to render even before JIRA is
-  // wired up.
+  // Compose the "issues" list. Two sources, with explicit CAPA slots taking
+  // priority — when the row has rich CAPA N {Stage, Title, Severity, RCA,
+  // Action, Owner, Due Date} columns we emit those. Otherwise fall back to
+  // one synthetic card per stage built from the narrative CAPA cell.
+  const baseId = makeId(projectName, releaseVersion, index);
   const issues = [];
-  const capaSources = [
-    { stage: "SQA", capa: row["SQA Bugs Learning (CAPA)"], count: sqaTotal },
-    { stage: "SIT/UAT/HAT", capa: row["SIT Bugs Learning (CAPA)"], count: sitTotal },
-    { stage: "Production", capa: row["Production Bugs Learning (CAPA)"], count: prodTotal },
-  ];
-  let issueIdx = 0;
-  for (const { stage, capa, count } of capaSources) {
-    if (!capa || !String(capa).trim()) continue;
-    issues.push({
-      id: `${makeId(projectName, releaseVersion, index)}_issue_${issueIdx++}`,
-      title: `${stage} CAPA — ${count ?? "?"} bugs`,
-      severity: stage === "Production" ? "critical" : stage === "SIT/UAT/HAT" ? "high" : "medium",
-      rca: null,
-      capa: String(capa).trim(),
-      owner: pick(row, "Owner") || null,
-      dueDate: null,
-      team: stage === "SQA" ? "QA" : stage === "Production" ? "Engineering" : "QA",
-      stage,
-    });
+  const explicitCapas = capaSlotsFromRow(row);
+  if (explicitCapas.length > 0) {
+    for (const c of explicitCapas) {
+      issues.push({
+        id: `${baseId}_capa_${c.n}`,
+        title: c.title,
+        severity: c.severity,
+        rca: c.rca,
+        capa: c.action,
+        owner: c.owner || pick(row, "Owner") || null,
+        dueDate: c.dueDate,
+        team: teamForStage(c.stage),
+        stage: c.stage,
+        jiraId: c.jiraId,
+        jiraUrl: c.jiraUrl,
+      });
+    }
+  } else {
+    const capaSources = [
+      { stage: "SQA", capa: row["SQA Bugs Learning (CAPA)"], count: sqaTotal },
+      { stage: "SIT/UAT/HAT", capa: row["SIT Bugs Learning (CAPA)"], count: sitTotal },
+      { stage: "Production", capa: row["Production Bugs Learning (CAPA)"], count: prodTotal },
+    ];
+    let issueIdx = 0;
+    for (const { stage, capa, count } of capaSources) {
+      if (!capa || !String(capa).trim()) continue;
+      issues.push({
+        id: `${baseId}_issue_${issueIdx++}`,
+        title: `${stage} CAPA — ${count ?? "?"} bugs`,
+        severity: stage === "Production" ? "critical" : stage === "SIT/UAT/HAT" ? "high" : "medium",
+        rca: null,
+        capa: String(capa).trim(),
+        owner: pick(row, "Owner") || null,
+        dueDate: null,
+        team: teamForStage(stage),
+        stage,
+      });
+    }
   }
 
-  // Retro learnings from the legacy schema also feed into teamLearnings.
-  const teamLearnings = [];
+  // Team learnings — two sources, merged:
+  //   1. Flexible "Learning N Team/Note/Owner/Due Date" slots (DHL schema).
+  //   2. Legacy retro columns from the older sprint scorecard.
+  const teamLearnings = [...learningSlotsFromRow(row)];
   for (const [team, col] of [
     ["QA", "What Didn't Go Well"],
     ["Engineering", "Action Items"],
@@ -137,7 +171,7 @@ export function rowToRelease(row, index = 0) {
     criticalBugsOpen: criticalCustBugs ?? null,
     totalBugs: sum(sqaTotal, sitTotal, prodTotal, internalBugs, customerBugs) || null,
     escapedDefects: prodTotal ?? customerPending ?? null,
-    mttr: num(row["Mean Time to Resolve (hrs)"]),
+    mttr: num(row["MTTR (hrs)"]) ?? num(row["Mean Time to Resolve (hrs)"]),
     slaAdherence: null, // not present in current CSVs
 
     // Stage breakdowns (preserved for UI).
@@ -166,10 +200,152 @@ export function rowToRelease(row, index = 0) {
       overallScore: num(row["Overall Release Score (0-10)"]),
     },
 
+    // JIRA links — three sources, merged + deduped:
+    //   1. The top-level "JIRA IDs" column (simple schema).
+    //   2. Per-issue "Issue N JIRA ID" / "CAPA N JIRA ID" columns.
+    //   3. Any IDs mentioned in CAPA narrative text fields.
+    jiraIds: collectJiraIds(row, issues),
+
     issues,
     teamLearnings,
     source: "csv",
   };
+}
+
+function collectJiraIds(row, issues) {
+  const seen = new Map();
+  const add = (id) => {
+    if (!id) return;
+    const trimmed = String(id).trim();
+    if (!trimmed) return;
+    if (!seen.has(trimmed)) seen.set(trimmed, { id: trimmed, url: jiraUrlFor(trimmed) });
+  };
+  for (const entry of jiraIdsFromRow(row)) add(entry.id);
+  for (const i of issues) if (i.jiraId) add(i.jiraId);
+  // Scan narrative cells for stray "GM-1234" style references so the user
+  // doesn't need to also list them in the JIRA IDs column.
+  const NARRATIVE_FIELDS = [
+    "SQA Bugs Learning (CAPA)",
+    "SIT Bugs Learning (CAPA)",
+    "Production Bugs Learning (CAPA)",
+    "Comments / Notes",
+  ];
+  for (const f of NARRATIVE_FIELDS) {
+    for (const id of extractJiraIds(row[f])) add(id);
+  }
+  return [...seen.values()];
+}
+
+// JIRA URL builder. Returns null when JIRA_BASE_URL isn't set so the
+// frontend can render plain text (and add the link lazily later if config
+// arrives via /api/config).
+const JIRA_ID_RE = /\b[A-Z][A-Z0-9_]+-\d+\b/g;
+function jiraUrlFor(id) {
+  const base = (process.env.JIRA_BASE_URL || "").replace(/\/+$/, "");
+  if (!base || !id) return null;
+  return `${base}/browse/${id}`;
+}
+
+function extractJiraIds(text) {
+  if (!text) return [];
+  const matches = String(text).match(JIRA_ID_RE);
+  return matches ? [...new Set(matches)] : [];
+}
+
+// Pull every issue slot from a row.  Accepts either:
+//   - Simple schema:   "Issue N Title / Severity / RCA / CAPA / Owner / Due Date / JIRA ID"
+//   - DHL schema:      "CAPA N Stage / Title / Severity / RCA / Action / Owner / Due Date"
+// Either prefix can have a "JIRA ID" column whose value becomes a clickable
+// link in the UI. Stage / severity are *data* (free strings) so new stages
+// or severities don't need code changes. A slot without a Title is skipped.
+function capaSlotsFromRow(row) {
+  const slotNums = new Set();
+  // Detect slots by their "Title" column under either prefix.
+  for (const col of Object.keys(row)) {
+    const m = col.match(/^(?:CAPA|Issue)\s+(\d+)\s+Title$/i);
+    if (m) slotNums.add(Number(m[1]));
+  }
+  // Also catch DHL rows that only define "CAPA N Stage" without a Title.
+  for (const col of Object.keys(row)) {
+    const m = col.match(/^CAPA\s+(\d+)\s+Stage$/i);
+    if (m) slotNums.add(Number(m[1]));
+  }
+
+  const out = [];
+  for (const n of [...slotNums].sort((a, b) => a - b)) {
+    // Prefer "Issue N <field>" when present, fall back to "CAPA N <field>".
+    const get = (field) =>
+      pick(row, `Issue ${n} ${field}`, `CAPA ${n} ${field}`);
+    const title = get("Title");
+    if (!title || !String(title).trim()) continue;
+
+    const jiraId = (get("JIRA ID") || "").toString().trim() || null;
+    // Simple schema uses "CAPA" as the corrective-action column on each issue
+    // (`Issue N CAPA`). Rich schema uses "Action". Try both.
+    const action =
+      (pick(row, `Issue ${n} CAPA`, `CAPA ${n} Action`) || "").toString().trim() ||
+      null;
+    out.push({
+      n,
+      stage: (get("Stage") || "").toString().trim() || null,
+      title: String(title).trim(),
+      severity:
+        (get("Severity") || "medium").toString().trim().toLowerCase() || "medium",
+      rca: (get("RCA") || "").toString().trim() || null,
+      action,
+      owner: (get("Owner") || "").toString().trim() || null,
+      dueDate: (get("Due Date") || "").toString().trim() || null,
+      jiraId,
+      jiraUrl: jiraUrlFor(jiraId),
+    });
+  }
+  return out;
+}
+
+// Top-level "JIRA IDs" column — comma-separated list shown as a row of
+// clickable badges on the release card, independent of issue slots.
+function jiraIdsFromRow(row) {
+  const raw = pick(row, "JIRA IDs", "Jira IDs", "JIRA Issues");
+  if (!raw) return [];
+  return String(raw)
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((id) => ({ id, url: jiraUrlFor(id) }));
+}
+
+function teamForStage(stage) {
+  const s = String(stage || "").toLowerCase();
+  if (s.includes("prod")) return "Engineering";
+  if (s.includes("sit") || s.includes("uat") || s.includes("hat")) return "QA";
+  if (s.includes("sqa") || s.includes("qa")) return "QA";
+  return "Engineering";
+}
+
+// Pull every "Learning N Team / Note / Owner / Due Date" group from a row.
+// The team name is *data*, not schema — callers can add slots or rename teams
+// just by editing the CSV. Slots with no team or no note are skipped.
+function learningSlotsFromRow(row) {
+  const slotNums = new Set();
+  const pattern = /^Learning\s+(\d+)\s+Team$/i;
+  for (const col of Object.keys(row)) {
+    const m = col.match(pattern);
+    if (m) slotNums.add(Number(m[1]));
+  }
+  const learnings = [];
+  for (const n of [...slotNums].sort((a, b) => a - b)) {
+    const team = row[`Learning ${n} Team`];
+    const note = row[`Learning ${n} Note`];
+    if (!team || !String(team).trim()) continue;
+    if (!note || !String(note).trim()) continue;
+    learnings.push({
+      team: String(team).trim(),
+      learning: String(note).trim(),
+      owner: (row[`Learning ${n} Owner`] || "").toString().trim() || null,
+      dueDate: (row[`Learning ${n} Due Date`] || "").toString().trim() || null,
+    });
+  }
+  return learnings;
 }
 
 function stageBlock(row, stage) {

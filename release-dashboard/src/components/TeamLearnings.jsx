@@ -1,15 +1,32 @@
-const TEAMS = ["Engineering", "QA", "Product", "Solutions"];
+// Default teams shown even when they have no learnings, in this fixed order.
+// Any extra teams that appear in the data are appended (alphabetical) so the
+// CSV can introduce new teams without a code change.
+const DEFAULT_TEAMS = ["Engineering", "QA", "Product", "Solutions"];
 
 export default function TeamLearnings({ learnings = [] }) {
-  const byTeam = TEAMS.reduce((acc, t) => ({ ...acc, [t]: [] }), {});
+  const present = new Set();
   for (const l of learnings) {
-    const team = TEAMS.includes(l.team) ? l.team : "Engineering";
+    if (l?.team) present.add(String(l.team).trim());
+  }
+  const extras = [...present]
+    .filter((t) => !DEFAULT_TEAMS.includes(t))
+    .sort((a, b) => a.localeCompare(b));
+  const teams = [...DEFAULT_TEAMS, ...extras];
+
+  const byTeam = teams.reduce((acc, t) => ({ ...acc, [t]: [] }), {});
+  for (const l of learnings) {
+    const team = (l.team && String(l.team).trim()) || "Engineering";
+    if (!byTeam[team]) byTeam[team] = [];
     byTeam[team].push(l);
   }
 
+  // Grid widens with team count: 4 default = 4 columns; more = wrap.
+  const colsClass =
+    teams.length > 4 ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-2 lg:grid-cols-4";
+
   return (
-    <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-      {TEAMS.map((team) => (
+    <div className={`grid gap-3 ${colsClass}`}>
+      {teams.map((team) => (
         <div key={team} className="card">
           <h4 className="font-semibold text-slate-800 mb-2">{team}</h4>
           {byTeam[team].length === 0 ? (

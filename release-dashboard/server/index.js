@@ -16,10 +16,13 @@ import {
   putCapa,
   getCapa,
   putReleases,
+  replaceAllReleases,
 } from "./store.js";
 import { scoreRelease } from "./scorecard.js";
 import { fetchBugsFor, syncRelease, startPolling } from "./jira.js";
 import { renderReleasePdf } from "./pdf.js";
+import { parseCsvDir } from "./csvParser.js";
+import { jsonToCsv } from "./jsonToCsvConverter.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -41,10 +44,122 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, releases: getReleases().length });
 });
 
+// Frontend config — base URL for JIRA links, etc. Kept tiny on purpose:
+// anything the SPA needs to render server-derived URLs goes here.
+app.get("/api/config", (_req, res) => {
+  res.json({
+    jiraBaseUrl: (process.env.JIRA_BASE_URL || "").replace(/\/+$/, "") || null,
+    jiraConfigured: Boolean(process.env.JIRA_API_TOKEN && process.env.JIRA_EMAIL),
+  });
+});
+
+// Sample CSV download — the "fill this in" template that the upload UI
+// links to. Served as a real .csv download so spreadsheet apps open it
+// nicely on click.
+app.get("/api/sample/release-csv", (_req, res) => {
+  const sample = path.resolve(__dirname, "../data/sample_release_simple.csv");
+  if (!fs.existsSync(sample)) {
+    return res.status(404).json({ error: "sample CSV missing on server" });
+  }
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", 'attachment; filename="release_template.csv"');
+  fs.createReadStream(sample).pipe(res);
+});
+
+// Create one release from JSON form input. Body is the simple release
+// schema (see jsonToCsvConverter.js for fields). We convert to a single-
+// row CSV, write it to data/<project>_<version>.csv, re-ingest, and
+// return the new release id so the SPA can navigate straight to its
+// scorecard.
+app.post("/api/releases", (req, res) => {
+  const body = req.body || {};
+  let csv;
+  try {
+    csv = jsonToCsv(body);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  const slug = (s) =>
+    String(s || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  const safeName = `${slug(body.project)}_${slug(body.version)}.csv` || "release.csv";
+  const dest = path.resolve(__dirname, "../data", safeName);
+  try {
+    fs.writeFileSync(dest, csv, "utf-8");
+  } catch (err) {
+    return res.status(500).json({ error: `write failed: ${err.message}` });
+  }
+
+  // Re-ingest synchronously so the response can include the resolved id.
+  try {
+    const records = parseCsvDir(path.resolve(__dirname, "../data"));
+    replaceAllReleases(records);
+  } catch (err) {
+    return res.status(500).json({ error: `ingest failed: ${err.message}` });
+  }
+
+  const id = `${slug(body.project)}_${slug(body.version)}`;
+  const release = getRelease(id);
+  res.status(201).json({
+    ok: true,
+    id,
+    savedAs: safeName,
+    release: release ? { ...release, scorecard: scoreRelease(release) } : null,
+  });
+});
+
+// Upload a CSV. The body is `{ filename, content }` — content is the raw
+// CSV text. We write it into data/, the fs.watch listener re-ingests, and
+// the response includes the post-ingest release count so the caller can
+// confirm at a glance.
+app.post("/api/upload", (req, res) => {
+  const { filename, content } = req.body || {};
+  if (!filename || typeof filename !== "string") {
+    return res.status(400).json({ error: "filename is required" });
+  }
+  if (!content || typeof content !== "string") {
+    return res.status(400).json({ error: "content (CSV text) is required" });
+  }
+  // Reject anything that tries to escape data/.
+  const safe = path.basename(filename).replace(/[^A-Za-z0-9._-]/g, "_");
+  if (!safe.toLowerCase().endsWith(".csv")) {
+    return res.status(400).json({ error: "filename must end in .csv" });
+  }
+  const dest = path.resolve(__dirname, "../data", safe);
+  try {
+    fs.writeFileSync(dest, content, "utf-8");
+  } catch (err) {
+    return res.status(500).json({ error: `write failed: ${err.message}` });
+  }
+  // Don't rely on the watcher alone — also ingest synchronously so the
+  // response can include the new count.
+  let ingestedCount = null;
+  try {
+    const records = parseCsvDir(path.resolve(__dirname, "../data"));
+    replaceAllReleases(records);
+    ingestedCount = records.length;
+  } catch (err) {
+    console.warn(`[upload] re-ingest failed: ${err.message}`);
+  }
+  res.status(201).json({ ok: true, savedAs: safe, ingestedCount });
+});
+
 // List projects + latest release scorecard for each.
 app.get("/api/projects", (_req, res) => {
   const latest = getProjectsLatest().map(withScore);
   res.json(latest);
+});
+
+// Flat list of every release across every CSV in data/.
+// Sorted by releaseDate desc so the newest is first.
+app.get("/api/releases", (_req, res) => {
+  const all = getReleases()
+    .map(withScore)
+    .sort((a, b) => (b.releaseDate || "").localeCompare(a.releaseDate || ""));
+  res.json(all);
 });
 
 // Full scorecard for a single release id.
@@ -131,6 +246,43 @@ if (fs.existsSync(distDir)) {
     if (req.path.startsWith("/api/")) return next();
     res.sendFile(path.join(distDir, "index.html"));
   });
+}
+
+// ---------- auto-ingest + file watch ------------------------------------ //
+//
+// On boot we re-parse every CSV in data/ so the store always reflects the
+// folder. While running, fs.watch fires re-ingests whenever a *.csv file is
+// added, edited or deleted. fs.watch on macOS can emit duplicate events for
+// a single save, so we debounce to coalesce bursts into one ingest.
+
+const DATA_DIR = path.resolve(__dirname, "../data");
+
+function ingestNow(reason = "manual") {
+  try {
+    const records = parseCsvDir(DATA_DIR);
+    // Use full-replace so a deleted CSV drops its records too.  CAPA
+    // entries (stored under store.capa[]) are untouched.
+    replaceAllReleases(records);
+    console.log(`[ingest] ${records.length} record(s) loaded from ${DATA_DIR} (${reason})`);
+  } catch (err) {
+    console.error(`[ingest] failed (${reason}): ${err.message}`);
+  }
+}
+
+ingestNow("startup");
+
+let watchTimer = null;
+function scheduleIngest(filename) {
+  if (!filename || !filename.toLowerCase().endsWith(".csv")) return;
+  clearTimeout(watchTimer);
+  watchTimer = setTimeout(() => ingestNow(`watch:${filename}`), 400);
+}
+
+try {
+  fs.watch(DATA_DIR, { persistent: true }, (_event, filename) => scheduleIngest(filename));
+  console.log(`[watch] watching ${DATA_DIR} for CSV changes`);
+} catch (err) {
+  console.warn(`[watch] could not watch ${DATA_DIR}: ${err.message}`);
 }
 
 // ---------- start ------------------------------------------------------- //

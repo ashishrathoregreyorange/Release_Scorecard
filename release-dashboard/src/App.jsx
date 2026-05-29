@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, Link, useLocation } from "react-router-dom";
 import { fetchProjects } from "./api.js";
 import { mockProjects } from "./data/mockData.js";
 import ProjectTabs from "./components/ProjectTabs.jsx";
 import ProjectView from "./components/ProjectView.jsx";
+import AllReleases from "./components/AllReleases.jsx";
+import NewReleaseForm from "./components/NewReleaseForm.jsx";
 
 export default function App() {
   const [projects, setProjects] = useState([]);
@@ -38,27 +40,27 @@ export default function App() {
               Published {publishDate} · Release Manager: {releaseManager}
             </p>
           </div>
-          {error && (
-            <span className="pill-conditional" title={error}>
-              offline mode
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            <NavLink to="/" label="All Releases" exact />
+            <NavLink to="/new" label="+ New Release" />
+            {error && (
+              <span className="pill-conditional" title={error}>
+                offline mode
+              </span>
+            )}
+          </div>
         </div>
       </nav>
 
       <main className="max-w-7xl mx-auto px-6 py-6">
         {loading ? (
           <div className="text-slate-500">Loading…</div>
-        ) : projects.length === 0 ? (
-          <EmptyState />
         ) : (
           <>
-            <ProjectTabs projects={projects} />
+            {projects.length > 0 && <ProjectTabs projects={projects} />}
             <Routes>
-              <Route
-                path="/"
-                element={<Navigate to={`/projects/${projects[0].id}`} replace />}
-              />
+              <Route path="/" element={<AllReleases />} />
+              <Route path="/new" element={<NewReleaseForm />} />
               <Route path="/projects/:id" element={<ProjectView />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
@@ -69,14 +71,21 @@ export default function App() {
   );
 }
 
-function EmptyState() {
+function NavLink({ to, label, exact }) {
+  const { pathname } = useLocation();
+  const isActive = exact ? pathname === to : pathname.startsWith(to);
   return (
-    <div className="card text-center py-12">
-      <p className="text-slate-600 mb-2">No releases ingested yet.</p>
-      <p className="text-sm text-slate-500">
-        Drop CSV files into <code>/data</code> and run{" "}
-        <code className="bg-slate-100 px-1 rounded">npm run ingest</code>.
-      </p>
-    </div>
+    <Link
+      to={to}
+      className={[
+        "text-sm px-3 py-1.5 rounded-lg border",
+        isActive
+          ? "border-slate-900 bg-slate-900 text-white"
+          : "border-slate-200 text-slate-700 hover:bg-slate-50",
+      ].join(" ")}
+    >
+      {label}
+    </Link>
   );
 }
+

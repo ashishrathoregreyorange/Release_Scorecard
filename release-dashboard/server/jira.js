@@ -76,29 +76,58 @@ export async function fetchBugsFor(projectKey, fixVersion, { forceRefresh = fals
     if (cached) return { ...cached, cached: true };
   }
 
-  const jql = fixVersion
-    ? `project = ${projectKey} AND issuetype = Bug AND fixVersion = "${fixVersion}"`
-    : `project = ${projectKey} AND issuetype = Bug`;
+  // Three ways to build the query, in priority order:
+  //   1. JIRA_FILTER_ID env (or release.jiraFilterId) — re-use a saved filter
+  //      (e.g. the one wrapped by greyorange-work dashboard 12599 gadget 26873).
+  //      We AND with fixVersion when both are present so each release stays scoped.
+  //   2. JIRA_JQL env — a raw JQL template (supports {fixVersion} placeholder).
+  //   3. Built JQL from projectKey + fixVersion (the default).
+  const filterId = env("JIRA_FILTER_ID");
+  const jqlTemplate = env("JIRA_JQL");
+  let jql;
+  if (filterId) {
+    jql = fixVersion
+      ? `filter = ${filterId} AND fixVersion = "${fixVersion}"`
+      : `filter = ${filterId}`;
+  } else if (jqlTemplate) {
+    jql = jqlTemplate.replace("{fixVersion}", fixVersion || "").trim();
+  } else {
+    jql = fixVersion
+      ? `project = ${projectKey} AND issuetype = Bug AND fixVersion = "${fixVersion}"`
+      : `project = ${projectKey} AND issuetype = Bug`;
+  }
 
+  // Cursor-pagination across the post-2025 endpoint. Stop after 5 pages so a
+  // mis-scoped JQL can't loop forever.
+  const collected = [];
+  let nextPageToken = undefined;
+  let pages = 0;
   try {
-    const { data } = await client().get("/rest/api/3/search", {
-      params: {
-        jql,
-        maxResults: 200,
-        fields: "summary,priority,status,assignee,duedate,components,resolution",
-      },
-    });
-    const issues = (data.issues || []).map(mapIssue);
-    const summary = summarize(issues);
-    const result = { enabled: true, issues, summary, jql };
+    do {
+      const { data } = await client().get("/rest/api/3/search/jql", {
+        params: {
+          jql,
+          maxResults: 100,
+          fields: "summary,priority,status,assignee,duedate,components,resolution",
+          ...(nextPageToken ? { nextPageToken } : {}),
+        },
+      });
+      for (const issue of data.issues || []) collected.push(mapIssue(issue));
+      nextPageToken = data.nextPageToken;
+      pages += 1;
+      if (data.isLast || !nextPageToken || pages >= 5) break;
+    } while (true);
+
+    const summary = summarize(collected);
+    const result = { enabled: true, issues: collected, summary, jql, pages };
     cacheSet(cacheKey, result);
     return result;
   } catch (err) {
     const msg = err.response
-      ? `${err.response.status} ${err.response.statusText}`
+      ? `${err.response.status} ${err.response.statusText}${err.response.data ? ` — ${typeof err.response.data === "string" ? err.response.data.slice(0, 200) : JSON.stringify(err.response.data).slice(0, 200)}` : ""}`
       : err.message;
     console.error(`[jira] ${projectKey}/${fixVersion}: ${msg}`);
-    return { enabled: true, error: msg, issues: [], summary: emptySummary() };
+    return { enabled: true, error: msg, issues: [], summary: emptySummary(), jql };
   }
 }
 
@@ -125,6 +154,13 @@ function emptySummary() {
 }
 
 // Patch a release record with the latest JIRA-derived fields.
+//
+// IMPORTANT: never clobber CSV-derived counts. CSV totals reflect bugs across
+// all stages for *this release*; JIRA results reflect whatever the configured
+// filter returns (often a global open-bugs filter scoped to a different
+// release or customer). Overwriting one with the other zeroed out releases
+// when the filter didn't match. We now store JIRA data alongside CSV data
+// and only overwrite when JIRA actually returned matches.
 export async function syncRelease(release, { forceRefresh = false } = {}) {
   if (!jiraEnabled()) return release;
   const projectKey = release.jiraProjectKey || guessProjectKey(release.projectName);
@@ -132,13 +168,35 @@ export async function syncRelease(release, { forceRefresh = false } = {}) {
   const result = await fetchBugsFor(projectKey, release.releaseVersion, { forceRefresh });
   if (!result.enabled || result.error) return release;
 
-  return {
+  const patch = {
     ...release,
-    criticalBugsOpen: result.summary.criticalOpen,
-    totalBugs: result.summary.total,
-    issues: [...(release.issues || []), ...result.issues],
+    jiraSummary: result.summary,
+    jiraIssues: result.issues,
     jiraSyncedAt: new Date().toISOString(),
+    // Append JIRA issues to the display list but de-dupe by id so repeated
+    // syncs don't grow the array forever.
+    issues: dedupeIssues([...(release.issues || []), ...result.issues]),
   };
+
+  // Only touch primary count fields when JIRA actually has matches AND the
+  // CSV didn't already supply a value.
+  if (result.summary.total > 0) {
+    if (release.totalBugs == null) patch.totalBugs = result.summary.total;
+    if (release.criticalBugsOpen == null) patch.criticalBugsOpen = result.summary.criticalOpen;
+  }
+  return patch;
+}
+
+function dedupeIssues(issues) {
+  const seen = new Set();
+  const out = [];
+  for (const i of issues) {
+    const key = i.id || `${i.title}-${i.stage}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(i);
+  }
+  return out;
 }
 
 function guessProjectKey(projectName) {

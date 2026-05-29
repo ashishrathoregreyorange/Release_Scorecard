@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { fetchProject, fetchHistory, syncProject, pdfUrl } from "../api.js";
+import { fetchProject, fetchHistory, syncProject, pdfUrl, fetchConfig } from "../api.js";
 import { mockProjects } from "../data/mockData.js";
 import ProjectHeader from "./ProjectHeader.jsx";
 import ScoreRing from "./ScoreRing.jsx";
@@ -10,11 +10,14 @@ import StageBreakdown from "./StageBreakdown.jsx";
 import HistoryChart from "./HistoryChart.jsx";
 import IssueCard from "./IssueCard.jsx";
 import TeamLearnings from "./TeamLearnings.jsx";
+import ReleasePicker from "./ReleasePicker.jsx";
+import JiraLinks from "./JiraLinks.jsx";
 
 export default function ProjectView() {
   const { id } = useParams();
   const [release, setRelease] = useState(null);
   const [history, setHistory] = useState([]);
+  const [config, setConfig] = useState({ jiraBaseUrl: null });
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState(null);
 
@@ -24,10 +27,15 @@ export default function ProjectView() {
     setRelease(null);
     (async () => {
       try {
-        const [proj, hist] = await Promise.all([fetchProject(id), fetchHistory(id)]);
+        const [proj, hist, cfg] = await Promise.all([
+          fetchProject(id),
+          fetchHistory(id),
+          fetchConfig().catch(() => ({ jiraBaseUrl: null })),
+        ]);
         if (cancelled) return;
         setRelease(proj);
         setHistory(hist.history || []);
+        setConfig(cfg);
       } catch (err) {
         if (cancelled) return;
         const fallback = mockProjects.find((p) => p.id === id) || mockProjects[0];
@@ -65,6 +73,8 @@ export default function ProjectView() {
 
   return (
     <div className="space-y-6">
+      <ReleasePicker history={history} currentId={release.id} />
+
       <ProjectHeader
         release={release}
         onSync={handleSync}
@@ -99,12 +109,16 @@ export default function ProjectView() {
 
       {history.length > 1 && <HistoryChart history={history} />}
 
+      {release.jiraIds?.length > 0 && (
+        <JiraLinks ids={release.jiraIds} jiraBaseUrl={config.jiraBaseUrl} />
+      )}
+
       <section>
         <h3 className="font-semibold text-slate-800 mb-3">RCA &amp; CAPA</h3>
         {release.issues?.length ? (
           <div className="grid md:grid-cols-2 gap-3">
             {release.issues.map((issue) => (
-              <IssueCard key={issue.id} issue={issue} />
+              <IssueCard key={issue.id} issue={issue} jiraBaseUrl={config.jiraBaseUrl} />
             ))}
           </div>
         ) : (

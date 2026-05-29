@@ -66,6 +66,16 @@ export function putReleases(records) {
   return data.releases.length;
 }
 
+// Full-sync write used by the folder-scan ingest. Records whose source CSV
+// has been removed disappear here — the upsert-only `putReleases` left
+// them orphaned. CAPA entries (stored separately) survive.
+export function replaceAllReleases(records) {
+  const data = readRaw();
+  data.releases = records;
+  writeRaw(data);
+  return data.releases.length;
+}
+
 export function putCapa(releaseId, capaEntry) {
   const data = readRaw();
   data.capa[releaseId] ||= [];
