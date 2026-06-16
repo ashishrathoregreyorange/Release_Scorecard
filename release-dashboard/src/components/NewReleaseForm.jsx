@@ -1,10 +1,10 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { createRelease } from "../api.js";
+import { useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { createRelease, fetchProject, updateRelease } from "../api.js";
 
-// Form-driven release entry. The user fills in only what they have; only
-// `project` and `version` are required. On submit we POST the JSON shape
-// the backend expects, then navigate to the new release's scorecard.
+// Form-driven release entry. Doubles as the edit form: when the URL has
+// a :id param (route /projects/:id/edit), we fetch the existing release
+// and prefill the inputs, then submit via PUT instead of POST.
 
 const SEVERITIES = ["critical", "high", "medium", "low"];
 
@@ -17,7 +17,10 @@ const emptyLearning = () => ({ team: "", note: "", owner: "", dueDate: "" });
 
 export default function NewReleaseForm() {
   const nav = useNavigate();
+  const { id: editingId } = useParams(); // undefined for /new, set for /projects/:id/edit
+  const isEditing = Boolean(editingId);
   const [submitting, setSubmitting] = useState(false);
+  const [prefilling, setPrefilling] = useState(isEditing);
   const [error, setError] = useState(null);
 
   // Top-level fields
@@ -37,9 +40,66 @@ export default function NewReleaseForm() {
   const [criticalOpen, setCriticalOpen] = useState("");
 
   const [jiraIdsStr, setJiraIdsStr] = useState("");
+  const [storyIdsStr, setStoryIdsStr] = useState("");
 
   const [issues, setIssues] = useState([emptyIssue()]);
   const [learnings, setLearnings] = useState([emptyLearning()]);
+
+  // Edit mode — fetch the release and back-translate from the canonical
+  // record schema into the form's field-by-field state.
+  useEffect(() => {
+    if (!editingId) return;
+    let cancelled = false;
+    setPrefilling(true);
+    setError(null);
+    (async () => {
+      try {
+        const r = await fetchProject(editingId);
+        if (cancelled) return;
+        setProject(r.projectName || "");
+        setCustomer(r.customerName || "");
+        setVersion(r.releaseVersion || "");
+        setOwner(r.owner || "");
+        setReleaseDate(r.releaseDate ? String(r.releaseDate).slice(0, 10) : "");
+        setTestPassRate(r.testPassRate ?? "");
+        setAutomationCoverage(r.automationCoverage ?? "");
+        setMttrHours(r.mttr ?? "");
+        setSqaBugs(r.stages?.sqa?.total ?? "");
+        setSitBugs(r.stages?.sit?.total ?? "");
+        setProdBugs(r.stages?.production?.total ?? "");
+        setCriticalOpen(r.criticalBugsOpen ?? "");
+        const idList = (r.jiraIds || []).map((j) => (typeof j === "string" ? j : j.id));
+        setJiraIdsStr(idList.join(", "));
+        const storyList = (r.storyIds || []).map((j) => (typeof j === "string" ? j : j.id));
+        setStoryIdsStr(storyList.join(", "));
+        const formIssues = (r.issues || []).map((i) => ({
+          jiraId: i.jiraId || "",
+          title: i.title || "",
+          severity: i.severity || "medium",
+          rca: i.rca || "",
+          capa: i.capa || "",
+          owner: i.owner || "",
+          dueDate: i.dueDate ? String(i.dueDate).slice(0, 10) : "",
+        }));
+        setIssues(formIssues.length ? formIssues : [emptyIssue()]);
+        const formLearnings = (r.teamLearnings || []).map((l) => ({
+          team: l.team || "",
+          note: l.learning || l.note || "",
+          owner: l.owner || "",
+          dueDate: l.dueDate ? String(l.dueDate).slice(0, 10) : "",
+        }));
+        setLearnings(formLearnings.length ? formLearnings : [emptyLearning()]);
+      } catch (err) {
+        if (cancelled) return;
+        setError(`Failed to load release: ${err.response?.data?.error || err.message}`);
+      } finally {
+        if (!cancelled) setPrefilling(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [editingId]);
 
   const updateIssue = (idx, field, value) => {
     setIssues((arr) => arr.map((it, i) => (i === idx ? { ...it, [field]: value } : it)));
@@ -76,6 +136,9 @@ export default function NewReleaseForm() {
     const jiraIds = jiraIdsStr.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
     if (jiraIds.length) payload.jiraIds = jiraIds;
 
+    const storyIds = storyIdsStr.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+    if (storyIds.length) payload.storyIds = storyIds;
+
     const cleanedIssues = issues
       .filter((i) => i.title.trim())
       .map((i) => ({
@@ -111,7 +174,9 @@ export default function NewReleaseForm() {
     }
     setSubmitting(true);
     try {
-      const result = await createRelease(buildPayload());
+      const result = isEditing
+        ? await updateRelease(editingId, buildPayload())
+        : await createRelease(buildPayload());
       nav(`/projects/${result.id}`);
     } catch (err) {
       setError(err.response?.data?.error || err.message);
@@ -123,19 +188,29 @@ export default function NewReleaseForm() {
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="flex items-baseline justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-slate-900">New Release Scorecard</h2>
+          <h2 className="text-xl font-semibold text-slate-900">
+            {isEditing ? "Edit Release Scorecard" : "New Release Scorecard"}
+          </h2>
           <p className="text-sm text-slate-500">
-            Fill what you have. Only Project Name and Release Version are required.
+            {isEditing
+              ? "Update any field and save. Changing Project or Version will move this release to a new id."
+              : "Fill what you have. Only Project Name and Release Version are required."}
           </p>
         </div>
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || prefilling}
           className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 disabled:opacity-50"
         >
-          {submitting ? "Generating…" : "Generate Release Scorecard"}
+          {submitting
+            ? (isEditing ? "Saving…" : "Generating…")
+            : (isEditing ? "Save Changes" : "Generate Release Scorecard")}
         </button>
       </div>
+
+      {prefilling && (
+        <div className="card text-sm text-slate-500">Loading release…</div>
+      )}
 
       {error && (
         <div className="card border-red-200 bg-red-50 text-sm text-red-700">{error}</div>
@@ -178,7 +253,7 @@ export default function NewReleaseForm() {
       <section className="card space-y-3">
         <h3 className="font-semibold text-slate-800">JIRA Issues</h3>
         <Field
-          label="Comma-separated JIRA IDs (badges shown on the release card)"
+          label="Comma-separated JIRA IDs (rendered as the Attached JIRA Issues table)"
           value={jiraIdsStr}
           onChange={setJiraIdsStr}
           placeholder="GM-1001, GM-1002, GM-1003"
@@ -268,20 +343,33 @@ export default function NewReleaseForm() {
         </div>
       </section>
 
+      {/* ---------------- CAPA Actions (formerly "Story IDs") ---------------- */}
+      <section className="card space-y-3">
+        <h3 className="font-semibold text-slate-800">CAPA Actions</h3>
+        <Field
+          label="Comma-separated JIRA keys (rendered as the CAPA Actions table)"
+          value={storyIdsStr}
+          onChange={setStoryIdsStr}
+          placeholder="GM-2001, GM-2002, GM-2003"
+        />
+      </section>
+
       <div className="flex justify-end gap-2">
         <button
           type="button"
-          onClick={() => nav("/")}
+          onClick={() => nav(isEditing ? `/projects/${editingId}` : "/")}
           className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-sm hover:bg-slate-50"
         >
           Cancel
         </button>
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || prefilling}
           className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 disabled:opacity-50"
         >
-          {submitting ? "Generating…" : "Generate Release Scorecard"}
+          {submitting
+            ? (isEditing ? "Saving…" : "Generating…")
+            : (isEditing ? "Save Changes" : "Generate Release Scorecard")}
         </button>
       </div>
     </form>

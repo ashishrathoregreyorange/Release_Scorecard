@@ -205,6 +205,8 @@ export function rowToRelease(row, index = 0) {
     //   2. Per-issue "Issue N JIRA ID" / "CAPA N JIRA ID" columns.
     //   3. Any IDs mentioned in CAPA narrative text fields.
     jiraIds: collectJiraIds(row, issues),
+    // Separate list — JIRA story keys for the release's stories table.
+    storyIds: storyIdsFromRow(row),
 
     issues,
     teamLearnings,
@@ -305,7 +307,18 @@ function capaSlotsFromRow(row) {
 // Top-level "JIRA IDs" column — comma-separated list shown as a row of
 // clickable badges on the release card, independent of issue slots.
 function jiraIdsFromRow(row) {
-  const raw = pick(row, "JIRA IDs", "Jira IDs", "JIRA Issues");
+  return idListFromCell(pick(row, "JIRA IDs", "Jira IDs", "JIRA Issues"));
+}
+
+// Sibling list — JIRA keys for the release's "CAPA Actions" table.
+// (Older CSVs may use "Story IDs" / "Stories"; both names still parse.)
+function storyIdsFromRow(row) {
+  return idListFromCell(
+    pick(row, "CAPA Action IDs", "CAPA Actions", "Story IDs", "JIRA Story IDs", "Stories"),
+  );
+}
+
+function idListFromCell(raw) {
   if (!raw) return [];
   return String(raw)
     .split(/[\s,]+/)
@@ -357,13 +370,19 @@ function stageBlock(row, stage) {
       : stage === "Production"
         ? "Production Bugs Learning (CAPA)"
         : "SIT Bugs Learning (CAPA)";
-  return {
-    product: num(row[`${prefix} - Product`]),
-    module: num(row[`${prefix} - Module`]),
-    saSi: num(row[`${prefix} - SA/SI`]),
-    total: num(row[`${prefix} Total`]),
-    capa: row[capaCol] || null,
-  };
+  const product = num(row[`${prefix} - Product`]);
+  const module = num(row[`${prefix} - Module`]);
+  const saSi = num(row[`${prefix} - SA/SI`]);
+  // Total can come from three sources, in priority order:
+  //   1. "<prefix> Total" (DHL rich schema)
+  //   2. "SQA Bugs" / "Production Bugs" / "SIT Bugs" (simple schema)
+  //   3. Sum of the per-category breakdown
+  const total =
+    num(row[`${prefix} Total`]) ??
+    num(row[prefix]) ??
+    (stage === "SIT/UAT/HAT" ? num(row["SIT Bugs"]) : null) ??
+    sum(product, module, saSi);
+  return { product, module, saSi, total, capa: row[capaCol] || null };
 }
 
 function sum(...vals) {

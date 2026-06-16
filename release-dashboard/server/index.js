@@ -19,7 +19,7 @@ import {
   replaceAllReleases,
 } from "./store.js";
 import { scoreRelease } from "./scorecard.js";
-import { fetchBugsFor, syncRelease, startPolling } from "./jira.js";
+import { fetchBugsFor, fetchIssuesByIds, syncRelease, startPolling } from "./jira.js";
 import { renderReleasePdf } from "./pdf.js";
 import { parseCsvDir } from "./csvParser.js";
 import { jsonToCsv } from "./jsonToCsvConverter.js";
@@ -66,18 +66,14 @@ app.get("/api/sample/release-csv", (_req, res) => {
   fs.createReadStream(sample).pipe(res);
 });
 
-// Create one release from JSON form input. Body is the simple release
-// schema (see jsonToCsvConverter.js for fields). We convert to a single-
-// row CSV, write it to data/<project>_<version>.csv, re-ingest, and
-// return the new release id so the SPA can navigate straight to its
-// scorecard.
-app.post("/api/releases", (req, res) => {
-  const body = req.body || {};
+// Helper shared by POST /api/releases and PUT /api/releases/:id. Returns
+// {error,status} on failure, or {id, savedAs, release} on success.
+function writeReleaseFromJson(body, { replaceCsvName = null } = {}) {
   let csv;
   try {
     csv = jsonToCsv(body);
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    return { error: err.message, status: 400 };
   }
 
   const slug = (s) =>
@@ -85,30 +81,62 @@ app.post("/api/releases", (req, res) => {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
-  const safeName = `${slug(body.project)}_${slug(body.version)}.csv` || "release.csv";
-  const dest = path.resolve(__dirname, "../data", safeName);
+  const newSlug = `${slug(body.project)}_${slug(body.version)}`;
+  const safeName = `${newSlug}.csv` || "release.csv";
+  const dataDir = path.resolve(__dirname, "../data");
+  const dest = path.resolve(dataDir, safeName);
+
+  // If the caller is editing and the identity changed, remove the old CSV
+  // so the same release doesn't appear twice.
+  if (replaceCsvName && replaceCsvName !== safeName) {
+    const oldPath = path.resolve(dataDir, replaceCsvName);
+    if (oldPath.startsWith(dataDir + path.sep) && fs.existsSync(oldPath)) {
+      try { fs.unlinkSync(oldPath); } catch { /* best effort */ }
+    }
+  }
+
   try {
     fs.writeFileSync(dest, csv, "utf-8");
   } catch (err) {
-    return res.status(500).json({ error: `write failed: ${err.message}` });
+    return { error: `write failed: ${err.message}`, status: 500 };
   }
-
-  // Re-ingest synchronously so the response can include the resolved id.
   try {
-    const records = parseCsvDir(path.resolve(__dirname, "../data"));
+    const records = parseCsvDir(dataDir);
     replaceAllReleases(records);
   } catch (err) {
-    return res.status(500).json({ error: `ingest failed: ${err.message}` });
+    return { error: `ingest failed: ${err.message}`, status: 500 };
   }
 
-  const id = `${slug(body.project)}_${slug(body.version)}`;
-  const release = getRelease(id);
-  res.status(201).json({
-    ok: true,
-    id,
+  const release = getRelease(newSlug);
+  return {
+    id: newSlug,
     savedAs: safeName,
     release: release ? { ...release, scorecard: scoreRelease(release) } : null,
+  };
+}
+
+// Create one release from JSON form input. Body is the simple release
+// schema (see jsonToCsvConverter.js for fields). We convert to a single-
+// row CSV, write it to data/<project>_<version>.csv, re-ingest, and
+// return the new release id so the SPA can navigate straight to its
+// scorecard.
+app.post("/api/releases", (req, res) => {
+  const result = writeReleaseFromJson(req.body || {});
+  if (result.error) return res.status(result.status).json({ error: result.error });
+  res.status(201).json({ ok: true, ...result });
+});
+
+// Update an existing release. If body.project / body.version change such
+// that the slug differs, the old CSV is removed so the release isn't
+// duplicated under two ids.
+app.put("/api/releases/:id", (req, res) => {
+  const existing = getRelease(req.params.id);
+  if (!existing) return res.status(404).json({ error: "Release not found" });
+  const result = writeReleaseFromJson(req.body || {}, {
+    replaceCsvName: `${req.params.id}.csv`,
   });
+  if (result.error) return res.status(result.status).json({ error: result.error });
+  res.json({ ok: true, ...result });
 });
 
 // Upload a CSV. The body is `{ filename, content }` — content is the raw
@@ -212,6 +240,16 @@ app.post("/api/projects/:id/sync", async (req, res) => {
 // Direct JIRA fetch (for debugging / preview without writing).
 app.get("/api/jira/:projectKey/:fixVersion", async (req, res) => {
   const result = await fetchBugsFor(req.params.projectKey, req.params.fixVersion);
+  res.json(result);
+});
+
+// Resolve a list of JIRA IDs to {id, title, status, severity, owner, url}.
+// Used by the release page to render the attached-JIRA table with live
+// status from JIRA (rather than just rendering the IDs as static text).
+app.post("/api/jira/issues", async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : null;
+  if (!ids) return res.status(400).json({ error: "body.ids must be an array of JIRA keys" });
+  const result = await fetchIssuesByIds(ids);
   res.json(result);
 });
 

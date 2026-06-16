@@ -131,6 +131,59 @@ export async function fetchBugsFor(projectKey, fixVersion, { forceRefresh = fals
   }
 }
 
+// Fetch a specific list of issues by key. Used by the per-release "linked
+// JIRA" table — we pass it the CSV-supplied IDs and get back live
+// summary/status/assignee/etc for each. Cached for 5 minutes.
+export async function fetchIssuesByIds(ids = []) {
+  if (!jiraEnabled()) {
+    return { enabled: false, issues: [] };
+  }
+  const cleaned = [...new Set(ids.map((s) => String(s || "").trim()).filter(Boolean))];
+  if (!cleaned.length) return { enabled: true, issues: [] };
+
+  const cacheKey = `byid:${cleaned.slice().sort().join(",")}`;
+  const hit = cacheGet(cacheKey);
+  if (hit) return { ...hit, cached: true };
+
+  const jql = `issuekey in (${cleaned.map((id) => `"${id.replace(/"/g, "")}"`).join(", ")})`;
+  try {
+    // Single request — capped at 100 ids (plenty for a release).
+    const { data } = await client().get("/rest/api/3/search/jql", {
+      params: {
+        jql,
+        maxResults: 100,
+        fields: "summary,priority,status,assignee,duedate,components,resolution,issuetype",
+      },
+    });
+    const issues = (data.issues || []).map(mapIssue);
+    // Annotate "missing" ids so the UI can show e.g. (no access) instead
+    // of silently dropping them.
+    const got = new Set(issues.map((i) => i.id));
+    for (const id of cleaned) {
+      if (!got.has(id)) {
+        issues.push({
+          id,
+          title: null,
+          status: null,
+          severity: null,
+          owner: null,
+          url: env("JIRA_BASE_URL") ? `${env("JIRA_BASE_URL")}/browse/${id}` : null,
+          missing: true,
+        });
+      }
+    }
+    const result = { enabled: true, issues, jql };
+    cacheSet(cacheKey, result);
+    return result;
+  } catch (err) {
+    const msg = err.response
+      ? `${err.response.status} ${err.response.statusText}`
+      : err.message;
+    console.error(`[jira] fetchIssuesByIds(${cleaned.length}): ${msg}`);
+    return { enabled: true, error: msg, issues: [] };
+  }
+}
+
 function summarize(issues) {
   const counts = { critical: 0, high: 0, medium: 0, low: 0 };
   let open = 0;

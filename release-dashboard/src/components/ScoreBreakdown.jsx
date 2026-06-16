@@ -16,8 +16,34 @@ export default function ScoreBreakdown({ scorecard }) {
     score: b.value == null ? 0 : Math.round(b.value),
     weight: b.weight,
     contribution: b.contribution,
+    raw: b.raw,
     available: b.value != null,
   }));
+
+  // Custom right-side label: shows "92" for filled rows or "no data" for
+  // null rows. Without this, rows that score 0 (or are missing) had a
+  // zero-width bar and nothing was visible against the dimension name.
+  const renderScoreLabel = (props) => {
+    const { x, y, width, height, index } = props;
+    const d = data[index];
+    if (!d) return null;
+    const labelX = (Number(width) > 0 ? Number(x) + Number(width) : Number(x)) + 6;
+    const labelY = Number(y) + Number(height) / 2 + 4;
+    if (!d.available) {
+      return (
+        <text x={labelX} y={labelY} fontSize={11} fill="#94a3b8" fontStyle="italic">
+          no data
+        </text>
+      );
+    }
+    const rawSuffix = d.raw != null ? `  (raw: ${d.raw})` : "";
+    return (
+      <text x={labelX} y={labelY} fontSize={11} fill="#0f172a">
+        {d.score}
+        <tspan fill="#94a3b8">{rawSuffix}</tspan>
+      </text>
+    );
+  };
 
   return (
     <div className="card">
@@ -29,15 +55,17 @@ export default function ScoreBreakdown({ scorecard }) {
       </div>
       <div style={{ width: "100%", height: 260 }}>
         <ResponsiveContainer>
-          <BarChart layout="vertical" data={data} margin={{ left: 30, right: 30 }}>
+          <BarChart layout="vertical" data={data} margin={{ left: 30, right: 110 }}>
             <XAxis type="number" domain={[0, 100]} fontSize={12} />
             <YAxis type="category" dataKey="dimension" width={130} fontSize={12} />
             <Tooltip
               formatter={(v, _n, p) =>
-                p.payload.available ? [`${v} / 100`, p.payload.dimension] : ["missing", p.payload.dimension]
+                p.payload.available
+                  ? [`${v} / 100${p.payload.raw != null ? ` · raw ${p.payload.raw}` : ""}`, p.payload.dimension]
+                  : ["no data", p.payload.dimension]
               }
             />
-            <Bar dataKey="score" radius={[0, 6, 6, 0]}>
+            <Bar dataKey="score" radius={[0, 6, 6, 0]} label={renderScoreLabel} isAnimationActive={false}>
               {data.map((d, i) => (
                 <Cell
                   key={i}

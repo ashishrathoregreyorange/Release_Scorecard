@@ -27,19 +27,13 @@ export default function App() {
     })();
   }, []);
 
-  const releaseManager = projects[0]?.owner || "—";
-  const publishDate = new Date().toLocaleDateString();
-
   return (
     <div className="min-h-screen">
       <nav className="bg-white border-b border-slate-200 no-print">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-semibold">GreyOrange Release Scorecard</h1>
-            <p className="text-xs text-slate-500">
-              Published {publishDate} · Release Manager: {releaseManager}
-            </p>
-          </div>
+          <Link to="/" className="flex items-center group">
+            <Logo />
+          </Link>
           <div className="flex items-center gap-3">
             <NavLink to="/" label="All Releases" exact />
             <NavLink to="/new" label="+ New Release" />
@@ -61,6 +55,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<AllReleases />} />
               <Route path="/new" element={<NewReleaseForm />} />
+              <Route path="/projects/:id/edit" element={<NewReleaseForm />} />
               <Route path="/projects/:id" element={<ProjectView />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
@@ -68,6 +63,33 @@ export default function App() {
         )}
       </main>
     </div>
+  );
+}
+
+// Logo for the top nav. Tries /logo.svg first, then /logo.png, then a
+// brand-coloured text fallback. Drop the file into release-dashboard/public/
+// to make it appear — no other config needed.
+function Logo() {
+  const candidates = ["/logo.svg", "/logo.png"];
+  const [idx, setIdx] = useState(0);
+  const exhausted = idx >= candidates.length;
+
+  if (exhausted) {
+    // Fallback when no file is present.
+    return (
+      <span className="text-lg font-semibold tracking-tight">
+        <span className="text-slate-900">Grey</span>
+        <span className="text-orange-500">Orange</span>
+      </span>
+    );
+  }
+  return (
+    <img
+      src={candidates[idx]}
+      alt="GreyOrange"
+      className="h-10 w-auto"
+      onError={() => setIdx((i) => i + 1)}
+    />
   );
 }
 

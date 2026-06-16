@@ -27,6 +27,16 @@ export async function createRelease(payload) {
   return data;
 }
 
+export async function updateRelease(id, payload) {
+  const { data } = await api.put(`/releases/${id}`, payload);
+  return data;
+}
+
+export async function fetchJiraIssuesByIds(ids) {
+  const { data } = await api.post("/jira/issues", { ids });
+  return data;
+}
+
 export async function fetchProject(id) {
   const { data } = await api.get(`/projects/${id}`);
   return data;

@@ -10,9 +10,25 @@ export async function renderReleasePdf(url) {
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 1200, height: 1600, deviceScaleFactor: 2 });
-    await page.goto(url, { waitUntil: "networkidle0", timeout: 30000 });
-    // Allow a beat for any post-load animation/data fetches to settle.
+    // Skip the strict `networkidle0` wait — the SPA fires cascading fetches
+    // (release → JIRA table) and `networkidle0` can finish before the JIRA
+    // call starts. We use `domcontentloaded` plus an explicit ready signal
+    // that the SPA flips after all required fetches resolve.
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+
+    // The SPA sets `window.__pdfReady = true` once the release record and
+    // (if applicable) the JIRA table have finished loading. Bail out after
+    // 20s so a stuck JIRA call doesn't hang PDF export forever — the page
+    // is then captured in whatever state it's in.
+    await page
+      .waitForFunction(() => window.__pdfReady === true, { timeout: 20000 })
+      .catch(() => {
+        console.warn("[pdf] __pdfReady never flipped — proceeding with snapshot anyway");
+      });
+
+    // Allow a beat for the JIRA table to actually paint after state flips.
     await new Promise((r) => setTimeout(r, 500));
+
     return await page.pdf({
       format: "A4",
       printBackground: true,

@@ -19,9 +19,12 @@ const WEIGHTS = {
 
 // Inverted metrics: lower is better. We cap at a "max bad value" beyond which
 // the score is 0. These caps are best-effort defaults; tune per project.
+//   0 bugs  → 100 (full)
+//   10 bugs →  50
+//   20+ bugs →  0 (capped)
 const INVERTED_CAPS = {
-  criticalBugsOpen: 5, // 5+ open criticals → 0
-  escapedDefects: 5, // 5+ escaped defects → 0
+  criticalBugsOpen: 20,
+  escapedDefects: 20,
 };
 
 function clamp(n, lo = 0, hi = 100) {

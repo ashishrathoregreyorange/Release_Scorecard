@@ -11,7 +11,7 @@ import HistoryChart from "./HistoryChart.jsx";
 import IssueCard from "./IssueCard.jsx";
 import TeamLearnings from "./TeamLearnings.jsx";
 import ReleasePicker from "./ReleasePicker.jsx";
-import JiraLinks from "./JiraLinks.jsx";
+import JiraIssuesTable from "./JiraIssuesTable.jsx";
 
 export default function ProjectView() {
   const { id } = useParams();
@@ -20,11 +20,32 @@ export default function ProjectView() {
   const [config, setConfig] = useState({ jiraBaseUrl: null });
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState(null);
+  // PDF-export readiness — set true when the page has finished fetching
+  // everything it'll show, so puppeteer waits for the JIRA + Stories
+  // tables before snapshotting. Tracked as a Set so adding another lazy
+  // table later doesn't require new state.
+  const [readyTables, setReadyTables] = useState(() => new Set());
+  const markReady = (key) =>
+    setReadyTables((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+
+  const expectedTables = [];
+  if ((release?.jiraIds?.length || 0) > 0) expectedTables.push("issues");
+  if ((release?.storyIds?.length || 0) > 0) expectedTables.push("stories");
+  const pageReady =
+    Boolean(release) && expectedTables.every((k) => readyTables.has(k));
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.__pdfReady = pageReady;
+    }
+  }, [pageReady]);
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
     setRelease(null);
+    setReadyTables(new Set());
+    if (typeof window !== "undefined") window.__pdfReady = false;
     (async () => {
       try {
         const [proj, hist, cfg] = await Promise.all([
@@ -110,7 +131,11 @@ export default function ProjectView() {
       {history.length > 1 && <HistoryChart history={history} />}
 
       {release.jiraIds?.length > 0 && (
-        <JiraLinks ids={release.jiraIds} jiraBaseUrl={config.jiraBaseUrl} />
+        <JiraIssuesTable
+          ids={release.jiraIds.map((j) => (typeof j === "string" ? j : j.id))}
+          jiraBaseUrl={config.jiraBaseUrl}
+          onLoaded={() => markReady("issues")}
+        />
       )}
 
       <section>
@@ -130,6 +155,15 @@ export default function ProjectView() {
         <h3 className="font-semibold text-slate-800 mb-3">Team Learnings</h3>
         <TeamLearnings learnings={release.teamLearnings} />
       </section>
+
+      {release.storyIds?.length > 0 && (
+        <JiraIssuesTable
+          ids={release.storyIds.map((j) => (typeof j === "string" ? j : j.id))}
+          jiraBaseUrl={config.jiraBaseUrl}
+          onLoaded={() => markReady("stories")}
+          title="CAPA Actions"
+        />
+      )}
     </div>
   );
 }

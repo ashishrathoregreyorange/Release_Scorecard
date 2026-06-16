@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 export default function ProjectHeader({ release, onSync, onExport, syncing }) {
   const rec = release.scorecard?.recommendation;
   const pillClass = `pill-${rec || "neutral"}`;
@@ -21,6 +23,12 @@ export default function ProjectHeader({ release, onSync, onExport, syncing }) {
         </div>
       </div>
       <div className="flex items-center gap-2 no-print">
+        <Link
+          to={`/projects/${release.id}/edit`}
+          className="px-3 py-2 text-sm rounded-lg border border-slate-300 bg-white hover:bg-slate-50"
+        >
+          Edit
+        </Link>
         <button
           onClick={onSync}
           disabled={syncing}
