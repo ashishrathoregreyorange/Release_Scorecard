@@ -25,6 +25,8 @@ function buildHeaders(maxIssues, maxLearnings) {
     "Project Name", "Customer Name", "Release Version", "Owner", "Release Date",
     "Test Pass Rate %", "Automation Coverage %", "MTTR (hrs)",
     "SQA Bugs", "SIT Bugs", "Production Bugs", "Critical Bugs Open",
+    "Bug Class - Total", "Bug Class - New Requirements", "Bug Class - Duplicates",
+    "Bug Class - Leaks from Testing", "Bug Class - TBD",
     "JIRA IDs", "CAPA Action IDs",
   ];
   for (let n = 1; n <= maxIssues; n++) {
@@ -45,10 +47,12 @@ function buildHeaders(maxIssues, maxLearnings) {
 function releaseToRow(rel, maxIssues, maxLearnings) {
   const m = rel.metrics || {};
   const b = rel.bugs || {};
+  const bc = rel.bugClassification || {};
   const row = [
     rel.project, rel.customer, rel.version, rel.owner, rel.releaseDate,
     m.testPassRate, m.automationCoverage, m.mttrHours,
     b.sqa, b.sit, b.production, b.criticalOpen,
+    bc.total, bc.newRequirements, bc.duplicates, bc.leaksFromTesting, bc.tbd,
     Array.isArray(rel.jiraIds) ? rel.jiraIds.join(", ") : "",
     Array.isArray(rel.storyIds) ? rel.storyIds.join(", ") : "",
   ];

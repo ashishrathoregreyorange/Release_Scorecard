@@ -12,6 +12,7 @@ import IssueCard from "./IssueCard.jsx";
 import TeamLearnings from "./TeamLearnings.jsx";
 import ReleasePicker from "./ReleasePicker.jsx";
 import JiraIssuesTable from "./JiraIssuesTable.jsx";
+import BugClassification from "./BugClassification.jsx";
 
 export default function ProjectView() {
   const { id } = useParams();
@@ -109,7 +110,7 @@ export default function ProjectView() {
         </div>
       )}
 
-      <section className="grid lg:grid-cols-3 gap-4">
+      <section className="grid lg:grid-cols-2 gap-4">
         <div className="card flex flex-col items-center justify-center">
           <ScoreRing score={score} recommendation={rec} />
           {release.scorecard?.rationale && (
@@ -118,10 +119,10 @@ export default function ProjectView() {
             </p>
           )}
         </div>
-        <div className="lg:col-span-2">
-          <MetricsGrid release={release} />
-        </div>
+        <BugClassification data={release.bugClassification} />
       </section>
+
+      <MetricsGrid release={release} />
 
       <section className="grid lg:grid-cols-2 gap-4">
         <ScoreBreakdown scorecard={release.scorecard} />

@@ -200,6 +200,10 @@ export function rowToRelease(row, index = 0) {
       overallScore: num(row["Overall Release Score (0-10)"]),
     },
 
+    // Bug classification matrix — input-driven counts by reason/source.
+    // Independent of the SQA / SIT / Production stage breakdown above.
+    bugClassification: bugClassificationFromRow(row),
+
     // JIRA links — three sources, merged + deduped:
     //   1. The top-level "JIRA IDs" column (simple schema).
     //   2. Per-issue "Issue N JIRA ID" / "CAPA N JIRA ID" columns.
@@ -316,6 +320,22 @@ function storyIdsFromRow(row) {
   return idListFromCell(
     pick(row, "CAPA Action IDs", "CAPA Actions", "Story IDs", "JIRA Story IDs", "Stories"),
   );
+}
+
+// Bug classification matrix. The 5 cells are independent counts; null means
+// the cell wasn't supplied in the CSV/JSON. Each column has a couple of
+// alternate spellings so the user can write "Bugs - Duplicates" or
+// "Bug Class - Duplicates" and either works.
+function bugClassificationFromRow(row) {
+  return {
+    total: num(row["Bug Class - Total"]) ?? num(row["Total Bugs (Classification)"]),
+    newRequirements:
+      num(row["Bug Class - New Requirements"]) ?? num(row["Bugs - New Requirements"]),
+    duplicates: num(row["Bug Class - Duplicates"]) ?? num(row["Bugs - Duplicates"]),
+    leaksFromTesting:
+      num(row["Bug Class - Leaks from Testing"]) ?? num(row["Bugs - Leaks from Testing"]),
+    tbd: num(row["Bug Class - TBD"]) ?? num(row["Bugs - TBD"]),
+  };
 }
 
 function idListFromCell(raw) {

@@ -42,6 +42,13 @@ export default function NewReleaseForm() {
   const [jiraIdsStr, setJiraIdsStr] = useState("");
   const [storyIdsStr, setStoryIdsStr] = useState("");
 
+  // Bug classification matrix
+  const [bcTotal, setBcTotal] = useState("");
+  const [bcNewReq, setBcNewReq] = useState("");
+  const [bcDuplicates, setBcDuplicates] = useState("");
+  const [bcLeaks, setBcLeaks] = useState("");
+  const [bcTbd, setBcTbd] = useState("");
+
   const [issues, setIssues] = useState([emptyIssue()]);
   const [learnings, setLearnings] = useState([emptyLearning()]);
 
@@ -72,6 +79,12 @@ export default function NewReleaseForm() {
         setJiraIdsStr(idList.join(", "));
         const storyList = (r.storyIds || []).map((j) => (typeof j === "string" ? j : j.id));
         setStoryIdsStr(storyList.join(", "));
+        const bc = r.bugClassification || {};
+        setBcTotal(bc.total ?? "");
+        setBcNewReq(bc.newRequirements ?? "");
+        setBcDuplicates(bc.duplicates ?? "");
+        setBcLeaks(bc.leaksFromTesting ?? "");
+        setBcTbd(bc.tbd ?? "");
         const formIssues = (r.issues || []).map((i) => ({
           jiraId: i.jiraId || "",
           title: i.title || "",
@@ -138,6 +151,14 @@ export default function NewReleaseForm() {
 
     const storyIds = storyIdsStr.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
     if (storyIds.length) payload.storyIds = storyIds;
+
+    const bugClassification = {};
+    if (numOrUndef(bcTotal) !== undefined) bugClassification.total = numOrUndef(bcTotal);
+    if (numOrUndef(bcNewReq) !== undefined) bugClassification.newRequirements = numOrUndef(bcNewReq);
+    if (numOrUndef(bcDuplicates) !== undefined) bugClassification.duplicates = numOrUndef(bcDuplicates);
+    if (numOrUndef(bcLeaks) !== undefined) bugClassification.leaksFromTesting = numOrUndef(bcLeaks);
+    if (numOrUndef(bcTbd) !== undefined) bugClassification.tbd = numOrUndef(bcTbd);
+    if (Object.keys(bugClassification).length) payload.bugClassification = bugClassification;
 
     const cleanedIssues = issues
       .filter((i) => i.title.trim())
@@ -246,6 +267,21 @@ export default function NewReleaseForm() {
           <Field label="SIT Bugs" type="number" value={sitBugs} onChange={setSitBugs} placeholder="5" />
           <Field label="Production Bugs" type="number" value={prodBugs} onChange={setProdBugs} placeholder="2" />
           <Field label="Critical Bugs Open" type="number" value={criticalOpen} onChange={setCriticalOpen} placeholder="1" />
+        </div>
+      </section>
+
+      {/* ---------------- Bug Classification matrix ---------------- */}
+      <section className="card space-y-3">
+        <h3 className="font-semibold text-slate-800">Bug Classification</h3>
+        <p className="text-xs text-slate-500 -mt-1">
+          Counts that feed the matrix card next to the Scorecard. All fields optional.
+        </p>
+        <div className="grid sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <Field label="Total Bugs" type="number" value={bcTotal} onChange={setBcTotal} placeholder="20" />
+          <Field label="New Requirements" type="number" value={bcNewReq} onChange={setBcNewReq} placeholder="5" />
+          <Field label="Duplicates" type="number" value={bcDuplicates} onChange={setBcDuplicates} placeholder="3" />
+          <Field label="Leaks from Testing" type="number" value={bcLeaks} onChange={setBcLeaks} placeholder="8" />
+          <Field label="TBD" type="number" value={bcTbd} onChange={setBcTbd} placeholder="4" />
         </div>
       </section>
 

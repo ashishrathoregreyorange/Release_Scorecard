@@ -1,0 +1,2 @@
+Project Name,Customer Name,Release Version,Owner,Release Date,Test Pass Rate %,Automation Coverage %,MTTR (hrs),SQA Bugs,SIT Bugs,Production Bugs,Critical Bugs Open,JIRA IDs,CAPA Action IDs,Learning 1 Team,Learning 1 Note,Learning 1 Owner,Learning 1 Due Date,Learning 2 Team,Learning 2 Note,Learning 2 Owner,Learning 2 Due Date
+Project Alpha,,v1.1.0,,2026-04-15,90.9,65,18,,,,2,,,QA,1 hotfix needed; customer critical bug missed in regression,Automation Engineer,,Engineering,Expand regression suite to cover customer flows,Automation Engineer,
